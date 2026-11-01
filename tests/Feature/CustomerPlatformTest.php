@@ -24,6 +24,89 @@ test('customers only see verified stores', function () {
         ->assertDontSee($hiddenStore->name);
 });
 
+test('customer home lets customers customize category tabs and uses service icons', function () {
+    $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+    Store::factory()->create([
+        'user_id' => User::factory()->create(['role' => 'merchant', 'status' => 'active'])->id,
+        'category' => 'Burgers',
+    ]);
+
+    $this->actingAs($customer)
+        ->get(route('customer.restaurants'))
+        ->assertOk()
+        ->assertSee('aria-label="Customize categories"', false)
+        ->assertSee('id="category-preferences"', false)
+        ->assertSee('data-category-preference', false)
+        ->assertSee('class="quick-action-icon"', false);
+});
+
+test('see all jumps to a complete shop list without including Moto AI', function () {
+    $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+    $merchant = User::factory()->create(['role' => 'merchant', 'status' => 'active']);
+    $firstShop = Store::factory()->create(['user_id' => $merchant->id, 'name' => 'First Shop', 'rating' => 4.9]);
+    $secondShop = Store::factory()->create(['user_id' => User::factory()->create(['role' => 'merchant'])->id, 'name' => 'Second Shop', 'rating' => 4.8]);
+    $thirdShop = Store::factory()->create(['user_id' => User::factory()->create(['role' => 'merchant'])->id, 'name' => 'Third Shop', 'rating' => 4.7]);
+
+    $response = $this->actingAs($customer)
+        ->get(route('customer.restaurants'))
+        ->assertOk()
+        ->assertSee('href="#all-shops"', false)
+        ->assertSee('id="all-shops"', false)
+        ->assertSee('Popular Near You')
+        ->assertSee('All Shops')
+        ->assertSee($firstShop->name)
+        ->assertSee($secondShop->name)
+        ->assertSee($thirdShop->name)
+        ->assertDontSee('Moto AI');
+
+    $response->assertViewHas('popularStores', fn ($popularStores) => $popularStores->pluck('id')->all() === [
+        $firstShop->id,
+        $secondShop->id,
+    ]);
+});
+
+test('custom delivery form presents package choices and a fixed order action', function () {
+    $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+
+    $this->actingAs($customer)
+        ->get(route('customer.custom-delivery.create'))
+        ->assertOk()
+        ->assertSee('Pickup details')
+        ->assertSee('Drop-off details')
+        ->assertSee('name="package_category" value="documents"', false)
+        ->assertSee('name="package_category" value="small_parcel"', false)
+        ->assertSee('name="package_category" value="other"', false)
+        ->assertSee('Verify Order Details')
+        ->assertDontSee('aria-label="Customer navigation"', false);
+});
+
+test('customer navigation only shows the inbox indicator for unread messages', function (string $notificationState, bool $expectsIndicator) {
+    $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+
+    if ($notificationState !== 'empty') {
+        $customer->customerNotifications()->create([
+            'type' => 'order',
+            'title' => 'Order update',
+            'message' => 'Your order is on its way.',
+            'read_at' => $notificationState === 'read' ? now() : null,
+        ]);
+    }
+
+    $response = $this->actingAs($customer)
+        ->get(route('customer.restaurants'))
+        ->assertOk();
+
+    if ($expectsIndicator) {
+        $response->assertSee('class="cx-bottom-dot"', false);
+    } else {
+        $response->assertDontSee('class="cx-bottom-dot"', false);
+    }
+})->with([
+    'empty inbox' => ['empty', false],
+    'unread message' => ['unread', true],
+    'read message' => ['read', false],
+]);
+
 test('non-customer accounts cannot open the customer storefront', function () {
     $merchant = User::factory()->create(['role' => 'merchant', 'status' => 'active']);
 
